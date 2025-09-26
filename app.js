@@ -1,5 +1,5 @@
 import * as ort from 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js';
-import { AutoTokenizer } from 'https://cdn.jsdelivr.net/npm/transformers/dist/transformers.min.js';
+import { AutoTokenizer } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers';
 
 let textEncoder, unet, vaeDecoder, tokenizer;
 const statusEl = document.getElementById('status');
