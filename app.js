@@ -2,32 +2,49 @@ import * as ort from 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.
 import { AutoTokenizer } from 'https://cdn.jsdelivr.net/npm/transformers/dist/transformers.min.js';
 
 let textEncoder, unet, vaeDecoder, tokenizer;
+const statusEl = document.getElementById('status');
+const generateBtn = document.getElementById('generateBtn');
 
-// Initialize tokenizer and models
+async function loadModelWithStatus(name, url) {
+  statusEl.innerText = `Loading ${name}...`;
+  const model = await ort.InferenceSession.create(url);
+  statusEl.innerText = `${name} loaded`;
+  return model;
+}
+
 async function loadModels() {
-  tokenizer = await AutoTokenizer.from_pretrained('https://huggingface.co/onnxruntime/sd-turbo/resolve/main/tokenizer/');
+  statusEl.innerText = 'Loading tokenizer...';
+  tokenizer = await AutoTokenizer.from_pretrained(
+    'https://huggingface.co/onnxruntime/sd-turbo/resolve/main/tokenizer/'
+  );
+  statusEl.innerText = 'Tokenizer loaded';
 
-  textEncoder = await ort.InferenceSession.create(
+  textEncoder = await loadModelWithStatus(
+    'text_encoder',
     'https://huggingface.co/onnxruntime/sd-turbo/resolve/main/text_encoder/model.onnx'
   );
-  unet = await ort.InferenceSession.create(
+
+  unet = await loadModelWithStatus(
+    'unet',
     'https://huggingface.co/onnxruntime/sd-turbo/resolve/main/unet/model.onnx'
   );
-  vaeDecoder = await ort.InferenceSession.create(
+
+  vaeDecoder = await loadModelWithStatus(
+    'vae_decoder',
     'https://huggingface.co/onnxruntime/sd-turbo/resolve/main/vae_decoder/model.onnx'
   );
 
-  console.log('Models and tokenizer loaded!');
+  statusEl.innerText = 'All models loaded!';
+  generateBtn.disabled = false;
 }
 
-// Generate random latent
+// Generate random latent for demo
 function initLatent(size=64){
   const latent = new Float32Array(size*size*4);
   for(let i=0;i<latent.length;i++) latent[i]=Math.random()*2-1;
   return latent;
 }
 
-// Draw latent tensor to canvas
 function drawCanvas(latents, canvas){
   const ctx = canvas.getContext('2d');
   const imgData = ctx.createImageData(canvas.width, canvas.height);
@@ -40,23 +57,19 @@ function drawCanvas(latents, canvas){
   ctx.putImageData(imgData,0,0);
 }
 
-// Main generation
+// Main generation (simplified)
 async function generateImage(prompt){
   if(!textEncoder || !unet || !vaeDecoder || !tokenizer) await loadModels();
 
-  // 1. Tokenize prompt
+  statusEl.innerText = 'Generating embeddings...';
   const encoded = await tokenizer.encode(prompt);
   const tokenIds = encoded.ids.map(x=>BigInt(x));
   const inputIds = new ort.Tensor('int64', BigInt64Array.from(tokenIds), [1, tokenIds.length]);
-
-  // 2. Text embeddings
   const embeddings = (await textEncoder.run({ input_ids: inputIds })).last_hidden_state;
 
-  // 3. Initialize latent
+  statusEl.innerText = 'Running diffusion...';
   let latent = initLatent(64*64*4);
-
-  // 4. Simplified diffusion steps (5 steps for demo)
-  for(let t=0; t<5; t++){
+  for(let t=0;t<5;t++){
     const unetOut = await unet.run({
       sample: latent,
       timestep: new Float32Array([t]),
@@ -65,9 +78,11 @@ async function generateImage(prompt){
     for(let i=0;i<latent.length;i++) latent[i]-=0.1*unetOut.sample[i];
   }
 
-  // 5. Decode latent → image
+  statusEl.innerText = 'Decoding image...';
   const decoded = await vaeDecoder.run({ latents: latent });
   drawCanvas(decoded.latents, document.getElementById('canvas'));
+
+  statusEl.innerText = 'Generation complete!';
 }
 
 // Register service worker
@@ -76,7 +91,10 @@ if('serviceWorker' in navigator){
 }
 
 // Button click
-document.getElementById('generateBtn').addEventListener('click',()=>{
+generateBtn.addEventListener('click',()=>{
   const prompt = document.getElementById('prompt').value;
   generateImage(prompt);
 });
+
+// Load models immediately on page load
+loadModels();
