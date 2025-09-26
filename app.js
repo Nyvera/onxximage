@@ -3,15 +3,45 @@ import { AutoTokenizer } from 'https://cdn.jsdelivr.net/npm/transformers/dist/tr
 
 let textEncoder, unet, vaeDecoder, tokenizer;
 const statusEl = document.getElementById('status');
+const progressEl = document.getElementById('progress');
 const generateBtn = document.getElementById('generateBtn');
 
-async function loadModelWithStatus(name, url) {
-  statusEl.innerText = `Loading ${name}...`;
-  const model = await ort.InferenceSession.create(url);
+// Helper: fetch ONNX with progress
+async function fetchModelWithProgress(url, name) {
+  statusEl.innerText = `Downloading ${name}...`;
+  const res = await fetch(url);
+  const contentLength = res.headers.get('Content-Length');
+  if (!contentLength) {
+    const arrayBuffer = await res.arrayBuffer();
+    statusEl.innerText = `${name} downloaded`;
+    return arrayBuffer;
+  }
+  const total = parseInt(contentLength, 10);
+  const reader = res.body.getReader();
+  let received = 0;
+  const chunks = [];
+  while(true){
+    const {done, value} = await reader.read();
+    if(done) break;
+    chunks.push(value);
+    received += value.length;
+    progressEl.value = (received/total)*100;
+  }
+  const arrayBuffer = new Uint8Array(chunks.reduce((acc, val)=>acc.concat(Array.from(val)), []));
+  statusEl.innerText = `${name} downloaded`;
+  progressEl.value = 0;
+  return arrayBuffer.buffer;
+}
+
+// Load ONNX model from fetched array buffer
+async function loadModelFromURL(url, name){
+  const buffer = await fetchModelWithProgress(url, name);
+  const model = await ort.InferenceSession.create(buffer);
   statusEl.innerText = `${name} loaded`;
   return model;
 }
 
+// Load all models + tokenizer
 async function loadModels() {
   statusEl.innerText = 'Loading tokenizer...';
   tokenizer = await AutoTokenizer.from_pretrained(
@@ -19,26 +49,24 @@ async function loadModels() {
   );
   statusEl.innerText = 'Tokenizer loaded';
 
-  textEncoder = await loadModelWithStatus(
-    'text_encoder',
-    'https://huggingface.co/onnxruntime/sd-turbo/resolve/main/text_encoder/model.onnx'
+  textEncoder = await loadModelFromURL(
+    'https://huggingface.co/onnxruntime/sd-turbo/resolve/main/text_encoder/model.onnx',
+    'text_encoder'
   );
-
-  unet = await loadModelWithStatus(
-    'unet',
-    'https://huggingface.co/onnxruntime/sd-turbo/resolve/main/unet/model.onnx'
+  unet = await loadModelFromURL(
+    'https://huggingface.co/onnxruntime/sd-turbo/resolve/main/unet/model.onnx',
+    'unet'
   );
-
-  vaeDecoder = await loadModelWithStatus(
-    'vae_decoder',
-    'https://huggingface.co/onnxruntime/sd-turbo/resolve/main/vae_decoder/model.onnx'
+  vaeDecoder = await loadModelFromURL(
+    'https://huggingface.co/onnxruntime/sd-turbo/resolve/main/vae_decoder/model.onnx',
+    'vae_decoder'
   );
 
   statusEl.innerText = 'All models loaded!';
   generateBtn.disabled = false;
 }
 
-// Generate random latent for demo
+// Remaining functions (latent init, drawCanvas, generateImage) are same as before
 function initLatent(size=64){
   const latent = new Float32Array(size*size*4);
   for(let i=0;i<latent.length;i++) latent[i]=Math.random()*2-1;
@@ -57,7 +85,6 @@ function drawCanvas(latents, canvas){
   ctx.putImageData(imgData,0,0);
 }
 
-// Main generation (simplified)
 async function generateImage(prompt){
   if(!textEncoder || !unet || !vaeDecoder || !tokenizer) await loadModels();
 
@@ -85,16 +112,13 @@ async function generateImage(prompt){
   statusEl.innerText = 'Generation complete!';
 }
 
-// Register service worker
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('/sw.js').then(()=>console.log('SW registered'));
 }
 
-// Button click
 generateBtn.addEventListener('click',()=>{
   const prompt = document.getElementById('prompt').value;
   generateImage(prompt);
 });
 
-// Load models immediately on page load
 loadModels();
